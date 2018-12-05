@@ -192,5 +192,5 @@ for line in stats:
             cnt_ints+=1
     if cnt_ints==len(intersect):
         print('количество рекламных компаний {}'.format(line[-1]))
-        break
+        break #для ситуации с большой таблицей
     cnt_ints=0

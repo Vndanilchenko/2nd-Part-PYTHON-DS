@@ -1,0 +1,211 @@
+# ДОМАШНЯЯ РАБОТА №3
+#Данильченко Вадим
+
+#Задание 1: функция суммы элементов списка
+"""
+Дан список вида. Напишите функцию, которая возвращает сумму элементов на диагонали. Т. е. 13+32+23+35.
+"""
+data = [
+    [13, 25, 23, 34],
+    [45, 32, 44, 47],
+    [12, 33, 23, 95],
+    [13, 53, 34, 35],
+]
+
+#Решение
+def summ_diag(data):
+    j=0
+    summ=0
+    for i in range(len(data)):
+        summ+=data[i][j]
+        j+=1
+    return summ
+summ_diag(data)
+
+
+#Задание 2: функция суммы элементов списка
+"""
+Дан список чисел, часть из которых имеют строковый тип или содержат буквы. 
+Напишите функцию, которая возвращает сумму квадратов элементов, которые могут быть числами.
+"""
+data2 = [1, '5', 'abc', 20, '2']
+
+#Решение 1: ищем просто int, не смотрим на текстовые
+def sum_num_sqrs(data2):
+    return sum([i**2 for i in data2 if type(i)==int])
+sum_num_sqrs(data2)
+
+#Решение 2: ищем все значения, поэлементно конвертируя в int
+def sum_num_after_convert(data2):
+    summ=0
+    for i in data2:
+        try:
+            summ+=int(i)**2
+        except:
+            print(f'ошибка: "{i}" не конвертируется в int')
+    return 'сумма сконвертированных элементов: "{}"'.format(summ)
+sum_num_after_convert(data2)
+
+
+#Задание 3: валюта с максимальным значением
+"""
+Напишите функцию, которая возвращает название валюты (поле 'Name') 
+с максимальным значением курса с помощью сервиса https://www.cbr-xml-daily.ru/daily_json.js
+"""
+
+#Решение:
+def max_valute():
+    import requests
+    r = requests.get('https://www.cbr-xml-daily.ru/daily_json.js')
+    max_val=max([line['Value'] for line in r.json()['Valute'].values()])
+    return 'максимальное значение "{}" приналежит валюте "{}"'.format(max_val,*[val['Name'] for val in r.json()['Valute'].values() if val['Value']==max_val])
+max_valute()
+
+
+#Задание 4: доработка класса
+"""
+Последнее упражнение с занятия
+1. Добавьте в класс еще один формат, который возвращает название валюты (например, 'Евро').
+
+2. Добавьте в класс параметр diff (со значениями True или False), который в случае значения True в методах 
+eur и usd будет возвращать не курс валюты, а изменение по сравнению с прошлым значением.
+"""
+eur_val=[0]
+usd_val=[0]   
+class Rate:
+    def __init__(self, format='value'):
+        self.format = format
+    
+    def exchange_rates(self):
+        """
+        Возвращает ответ сервиса с информацией о валютах в виде:
+        
+        {
+            'AMD': {
+                'CharCode': 'AMD',
+                'ID': 'R01060',
+                'Name': 'Армянских драмов',
+                'Nominal': 100,
+                'NumCode': '051',
+                'Previous': 14.103,
+                'Value': 14.0879
+                },
+            ...
+        }
+        """
+        r = requests.get('https://www.cbr-xml-daily.ru/daily_json.js')
+        return r.json()['Valute']
+    
+    def make_format(self, currency):
+        """
+        Возвращает информацию о валюте currency в двух вариантах:
+        - полная информация о валюте при self.format = 'full':
+        Rate('full').make_format('EUR')
+        {
+            'CharCode': 'EUR',
+            'ID': 'R01239',
+            'Name': 'Евро',
+            'Nominal': 1,
+            'NumCode': '978',
+            'Previous': 79.6765,
+            'Value': 79.4966
+        }
+        
+        Rate('value').make_format('EUR')
+        79.4966
+        """
+        response = self.exchange_rates()
+        
+        if currency in response:
+            if self.format == 'full':
+                return response[currency]
+            
+            if self.format == 'value':
+                return response[currency]['Value']
+        
+        return 'Error'
+    
+    def eur(self):
+        """Возвращает курс евро на сегодня в формате self.format"""
+        return self.make_format('EUR')
+    
+    def usd(self):
+        """Возвращает курс доллара на сегодня в формате self.format"""
+        return self.make_format('USD')
+
+#-----------------------------------------------------------------------------------------------------
+    #Решение 1й части
+    def val_name(self, currency):
+        #возвращает название валюты
+        response = self.exchange_rates()
+        return response[currency]['Name']
+
+    #Решение 2й части
+    def diff(self, currency, TF):
+        from datetime import datetime
+        global eur_val
+        global usd_val
+        
+        new_eur=self.eur()
+        new_usd=self.usd()
+        
+        if TF==True:
+            if currency=='EUR':
+                if new_eur==eur_val[-1]:
+                    difference=0
+                else:
+                    difference=new_eur-eur_val[-1]
+                    eur_val.append(new_eur)
+                return 'изменение валюты "{}" на "{}" составляет "{}"'.format(currency, datetime.today(), difference)
+            elif currency=='USD':
+                if new_usd==usd_val[-1]:
+                    difference=0
+                else:
+                    difference=new_usd-usd_val[-1]
+                    usd_val.append(new_usd)
+                return 'изменение валюты "{}" на "{}" составляет "{}"'.format(currency, datetime.today(), difference)
+        elif TF==False:
+            if currency=='EUR': 
+                return f'текущий курс EUR={new_eur}'
+            elif currency=='USD': 
+                return f'текущий курс USD={new_usd}'
+
+# название валюты
+Rate().val_name('USD')
+
+# разница с последним значением или актуальный показатель (только EUR и USD)
+Rate().diff('EUR', True)
+
+
+#Задание 5: сумма n-чисел ряда
+"""
+Напишите функцию, возвращающую сумму первых n чисел Фибоначчи
+"""
+#Решение
+
+def fibonachy():
+    print('введите длину ряда')
+    n=int(input())
+    fib=[]
+    for i in range(n):
+        if len(fib)<2:
+            fib.append(1)
+        else:
+            fib.append(fib[-1]+fib[-2])
+    return f'сумма {n} элементов в ряде Фибоначчи {fib} равна {sum(fib)}'
+
+fibonachy()
+
+
+#Задание 6: преобразуем список в словарь по формату
+"""
+Напишите функцию, преобразующую произвольный список вида ['2018-01-01', 'yandex', 'cpc', 100] 
+в словарь {'2018-01-01': {'yandex': {'cpc': 100}}}
+"""
+spis=['2018-01-01', 'yandex', 'cpc', 100]
+def slovar(spis):
+    slov={}
+    date, name, channel, cnt=spis
+    slov.setdefault(date,{name:{channel:cnt}})
+    return slov
+slovar(spis)

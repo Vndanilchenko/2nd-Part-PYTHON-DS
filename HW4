@@ -1,0 +1,187 @@
+# ДОМАШНЯЯ РАБОТА №4
+#Данильченко Вадим
+
+#Задание 1: дни между дтами
+"""
+Напишите функцию date_range, которая возвращает список дней между датами start_date и end_date. 
+Даты должны вводиться в формате YYYY-MM-DD.
+"""
+
+#Решение 1: правую границу интервала не включаем, левую включаем, т.к. считаем полным днем с 00:00:00
+def datediff(start_date, end_date):
+    from datetime import datetime
+    difference=datetime.strptime(end_date,'%Y-%m-%d')-datetime.strptime(start_date,'%Y-%m-%d')
+    return f'{difference.days} дней между "{start_date}" и "{end_date}": {list(range(1,difference.days+1))}'
+datediff(start_date='2018-12-01', end_date='2018-12-09')
+
+#Решение 2
+def datediff2(start_date, end_date):
+    from datetime import date
+    s_date=[int(i) for i in start_date.split('-')]
+    e_date=[int(i) for i in end_date.split('-')]
+    difference=date(e_date[0],e_date[1],e_date[2])-date(s_date[0],s_date[1],s_date[2])
+    return f'{difference.days} дней между "{start_date}" и "{end_date}": {list(range(1,difference.days+1))}'
+datediff2(start_date='2018-12-01', end_date='2018-12-09')
+
+
+#Задание 2: добавляем проверку дат
+"""
+Дополните функцию из первого задания проверкой на корректность дат. 
+В случае неверного формата или если start_date > end_date должен возвращаться пустой список.
+"""
+
+#Решение
+#функция проверки формата и преобразования даты, в нее передается каждая дата из основной функции
+def date_converter(any_date):
+    try:
+        return datetime.strptime(any_date,'%Y-%m-%d')
+    except ValueError:
+        try:
+            return datetime.strptime(any_date,'%Y-%m-%d %H:%M')
+        except ValueError:
+            try:
+                return datetime.strptime(any_date,'%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                try:
+                    return datetime.strptime(any_date,'%Y.%m.%d %H:%M:%S')
+                except ValueError:                  
+                    try:
+                        return datetime.strptime(any_date,'%y-%m-%d')
+                    except ValueError:
+                        try:
+                            return datetime.strptime(any_date,'%Y.%m.%d')
+                        except ValueError:
+                            return 'error1: undefined format'
+
+#основная функция, считает разницу между датами и выводит список дней или ошибку
+
+def datediff_modified(start_date, end_date):
+    from datetime import datetime
+    try:
+        if date_converter(end_date)=='error1: undefined format':
+            return f'error1: undefined format for "{end_date}"'
+        elif date_converter(start_date)=='error1: undefined format':
+            return f'error1: undefined format for "{start_date}"'
+        else:
+            date_converter(start_date)
+            difference=date_converter(end_date)-date_converter(start_date)
+            return f'{difference.days} дней между "{start_date}" и "{end_date}": {list(range(1,difference.days+1))}'
+    except:
+        return 'error2'
+
+
+#datediff_modified(start_date='2018-12-01 00:00', end_date='18-12-09') #посчитает
+#datediff_modified(start_date='2018-12-01 00:00:00', end_date='2018.12.09') #посчитает
+datediff_modified(start_date='2018.12.01 00:00:00', end_date='2018-12-09') #посчитает
+#datediff_modified(start_date='2018-12-01 00:00', end_date='18-12-09 01:00pm') #выдаст ошибку
+
+
+#Задание 3: проверка даты на корректность и соответствие формату YYYY-MM-DD
+"""
+Дан поток дат в формате YYYY-MM-DD, в которых встречаются некорректные значения.
+Напишите функцию, которая проверяет эти даты на корректность. 
+Т. е. для каждой даты возвращает True (дата корректна) или False (некорректная дата). 
+"""
+stream = ['2018-04-02', '2018-02-29', '2018-19-02']
+
+#Решение: 
+def check_date(any_date):
+    try:
+        datetime.strptime(any_date, '%Y-%m-%d')
+        return print('дата "{}" корректна: {}'.format(any_date, True))
+    except ValueError:
+        return print('дата "{}" корректна: {}'.format(any_date, False))
+
+for dt in stream:
+    check_date(dt)
+    
+
+#Задание 4: список дней месяца до заданной даты
+"""
+Напишите функцию, которая возвращает список дат с 1 по вчерашний день текущего месяца. 
+Если дан 1 день месяца, то возвращается список дней прошлого месяца.
+"""
+
+#Решение
+def dates_from_1st_months_day(curr_date):
+    from datetime import datetime, timedelta
+    list_of_dates=[]
+    start_date=datetime.strptime(curr_date, '%Y-%m-%d')
+    start_date=start_date-timedelta(days=1)
+    end_date=datetime.strptime(start_date.strftime('%Y-%m-01'), '%Y-%m-%d')
+    while start_date>=end_date:
+        list_of_dates.append(start_date.strftime('%Y-%m-%d'))
+        start_date-=timedelta(days=1)    
+    return list_of_dates
+
+#dates_from_1st_months_day('2018-12-09') #вернет текущий месяц
+dates_from_1st_months_day('2018-12-01') #вернет прошлый месяц
+
+
+#Задание 5: привязка расчета даты к фразе
+"""
+Напишите функцию, которая возвращает точную дату в формате YYYY-MM-DD по фразе:
+1. 'today' - сегодняшнюю дату
+2. 'last monday' -  прошлый понедельник
+3. 'last day' - Последний день текущего месяца
+"""
+
+#Решение
+def date_commands(command):
+    from datetime import datetime,timedelta
+    from dateutil.relativedelta import relativedelta
+    
+    if command=='today':
+        today=datetime.today().strftime("%Y-%m-%d")
+        return f'сегодня {today}'
+    elif command=='last monday':
+        last_monday=(datetime.today()-timedelta(days=datetime.today().weekday())).strftime("%Y-%m-%d")
+        return f'прошлый понедельник был {last_monday}'
+    elif command=='last day':
+        last_day=(datetime.today()-timedelta(days=datetime.today().day)+relativedelta(months=1)).strftime("%Y-%m-%d")
+        return f'последний день текущего месяца будет {last_day}'
+
+#date_commands('today')
+#date_commands('last day')
+date_commands('last monday')
+
+
+#Задание 6: создадим недельные интервалы между датами, не включая недели дат, если они дают неполные недели
+"""
+Напишите функцию, которая разбивает на недели с понедельника по воскресенье интервал дат между start_date и end_date. 
+Считайте, что входные данные всегда корректны. В ответ должны входить только полные недели.
+"""
+
+#Решение
+def full_weeks_between_dates(start_date, end_date):
+    s_date=datetime.strptime(start_date,'%Y-%m-%d')
+    e_date=datetime.strptime(end_date,'%Y-%m-%d')
+    curr_date=s_date
+    list_of_dates=[] #границы недель
+    list_of_weeks=[] #недели и их длина в днях
+    week_len=0 #дней в неделе
+    while s_date<=curr_date<=e_date:
+        week_len+=1
+        #проверим первое значение
+        if curr_date==s_date:
+                #если пн, то добавляем один раз, а если вск, то левая граница равна правой
+                if curr_date.weekday()==6:
+                    list_of_dates.append(curr_date)
+                    list_of_dates.append(curr_date)
+                else:
+                    list_of_dates.append(curr_date)
+        else:
+            if curr_date.weekday()==0:
+                list_of_dates.append(curr_date)       
+            elif curr_date.weekday()==6:
+                list_of_dates.append(curr_date)
+                list_of_dates.append(week_len)
+                list_of_weeks.append(list_of_dates)
+                list_of_dates=[]    
+                week_len=0
+        curr_date+=timedelta(days=1)
+
+    return [f'с {line[0].strftime("%Y-%m-%d")} по {line[1].strftime("%Y-%m-%d")}' for line in list_of_weeks if line[2]==7]
+
+#вызовем функцию
+full_weeks_between_dates(start_date='2018-12-01', end_date='2018-12-29')

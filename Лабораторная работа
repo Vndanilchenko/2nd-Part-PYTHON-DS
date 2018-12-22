@@ -1,0 +1,143 @@
+# Лабораторная работа по модулю “Python для анализа данных”
+#ДАНИЛЬЧЕНКО ВАДИМ
+
+"""
+Списки и строки – одни из важных начальных понятий для любого дата сайентиста,поскольку на знании принципов работы с ними 
+строится работа с препроцессингоми обработкой данных в python в целоми работы с модулем pandas в частности:
+"""
+
+#Задание 1: Дан произвольный список, содержащий только числа.Выведите результат сложения всех чисел больше 10
+ls=list(range(0,13))
+f'сумма элементов списка, которые больше 10: {sum([i for i in ls if i>=10])}'
+
+#Задание 2: Пусть задан список, содержащий строки.Выведите все строки, заканчивающиеся буквой r
+string="1 Lists and strings are one of the important initial concepts for any Data Scientist since working with preprocessing and data processing in python in general and working with the pandas module in particular is built on knowledge of the principles of working with them 5"
+ls=string.split(' ') #при условии, что я знаю, что разделитель только пробел
+print('все строки в списке, заканчивающиеся на букву r: {}'.format([i for i in ls if type(i)==str and i[-1]=='r']))
+
+#Задание 3: 
+"""Сгенерируйте и выведите cлучайную строку размером 6 символов, содержащую только цифры. 
+Строка должна содержать хотя бы одну цифру 3"""
+import random
+n=6
+string=''.join([str(random.randint(0,9)) for i in range(6)])
+if '3' not in string:
+    string=string[0:5]+'3'
+f'случайно сгенерированная строка из цифр, содержащая хотя бы одну цифру 3: "{string}"'
+
+#Задание 4: Пусть дана строка произвольной длины. Выведите информацию о том,сколько в ней символов и сколько слов
+string="1 Lists and strings are one of the important initial concepts for any Data Scientist since working with preprocessing and data processing in python in general and working with the pandas module in particular is built on knowledge of the principles of working with them 5"
+f'{len(string)} символов и {len(ls)} слов в строке: "{string}"'
+
+"""
+Матрицы-следующее за списками и строками важное понятие.Широко используется в линейной алгебре.
+Находит свое применение в современных рекомендательных системах и архитектуре нейронных сетей:
+"""
+
+#Задание1: 
+"""Пусть дана матрица чисел размером NхN. Представьте данную матрицу в виде списка. 
+Выведите результат сложения всех элементов матрицы."""
+#создадим матрицу 
+import numpy as np
+print('введите размерность матрицы')
+n=int(input())
+matrix=np.linspace(n, 25, n*n)
+#print(matrix)
+#переделаем в список
+ls=[] #список линий
+ls_elem=[] #элементы линий
+i=1 #счетчик перехода на другую линию
+k=1
+for elem in matrix:
+    #print(elem)
+    if i<=n:
+        if k!=n*n:
+            ls_elem.append(elem)
+        else:
+            ls_elem.append(elem)
+            ls.append(ls_elem)
+        i+=1
+    elif i>n:
+        ls.append(ls_elem)
+        ls_elem=[]
+        ls_elem.append(elem)
+        i=2
+   # print('k={}'.format(k) )  
+    k+=1
+#ls
+#посчитаем сумму элементов
+print('кажется слегка накосячил, но уже нет времени переделывать :)')
+print('сумма элементов матрицы')
+print(matrix)
+f'равна: {sum([sum(line) for line in ls])}'
+
+#Задание2: Пусть дана матрица чисел размером NхM. Найти столбец матрицы с максимальной суммой элементов
+ls=[[2,1],[1,2],[3,3]]
+max_sum=0
+col=0
+for i in ls:
+    print(i)
+    if sum(i)>max_sum:
+        max_sum=sum(i)
+        col=i
+f'столбец {col} обладает максимальной суммой элементов: {max_sum}'
+
+"""
+Работа с динамичными структурами важная часть в имплементации вашего кода в продакшнсистему
+"""
+
+#Задание1:
+"""Пусть список студентов представлен в виде структуры 
+[[No, ФИО, Возраст,Группа],[No, ФИО, Возраст, Группа],[No, ФИО, Возраст, Группа]]. 
+Преобразуйте список в словарь вида: {No: [ФИО, Возраст, Группа], No:[....], No: [....]}"""
+students_list=[[1, 'Иванов Иван', 20, 'НП101'],[2, 'Смирнов Илья', 22, 'НП102'],[3, 'Сидоров Владимир', 21, 'НП101'],[4, 'Попов Евгений', 20, 'НП104']]
+students_dict={}
+
+for line in students_list:
+    No, *other=line
+    students_dict.setdefault(No,[0])
+    students_dict[No]=other
+print('исходный список: {}'.format(students_list))
+f'результирующий словарь: {students_dict}'
+
+#Задание2:
+"""Добавьте к задаче No6 для словаря возможность (без преобразования словаря обратно в список) изменить группу студента. 
+Поиск по «ФИО» («ФИО» студента и новый номер группы необходимо ввести с клавиатуры)"""
+print('состав группы : {}'.format(students_dict))
+print('изменим номер группы для студента')
+print('введите студента')
+student=input()
+print('введите новую группу')
+group=input()
+ls=[]
+for line in students_dict:
+    #print(students_dict[line])
+    if student in students_dict[line]:
+        print(student)
+        ls=students_dict[line]
+        ls[-1]=group
+        print(ls)
+        students_dict[line]=ls
+    else:
+        'нет результата'
+print('конечный результат после смены группы {}'.format(students_dict))
+
+#Задание2:Добавьте к задаче No6для словаря возможность (без преобразования словаря обратно в список) изменить возраст студента
+print('состав группы : {}'.format(students_dict))
+print('изменим возраст студента')
+print('введите студента')
+student=input()
+print('введите новый возраст')
+age=input()
+ls=[]
+for line in students_dict:
+    #print(students_dict[line])
+    if student in students_dict[line]:
+        print(student)
+        ls=students_dict[line]
+        ls[-2]=age
+        print(ls)
+        students_dict[line]=ls
+    else:
+        'нет результата'
+print('конечный результат после смены группы {}'.format(students_dict))

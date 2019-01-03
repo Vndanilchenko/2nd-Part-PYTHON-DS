@@ -37,6 +37,8 @@ def weekday_hours(data):
 new_data=weekday_hours(df_orders)
 new_data.head()
 
+# проанализируем какие транспортные компании более востребованы и попытаемся разгадать причины
+
 #группируем и строим сводную таблицу
 new_data_grouped=new_data.groupby(['weekday','hour_origin']).trip_duration.count().reset_index()
 new_data_grouped.rename(columns={'trip_duration':'cnt'}, inplace=True)
@@ -115,6 +117,8 @@ layout = {'title': 'заказы по вендорам'}
 fig = go.Figure(data=data, layout=layout)
 iplot(fig, show_link=False)
 #видно, что вендор 1 выполняет большее количество заказов в сравнении с вендором 2
+
+# поищем различия между компаниями, чтобы понять причины успеха вендора 2
 
 # продолжительность поездки 
 # Гипотеза - менее продолжительные поездки позовляют быстрее освобождать автомобили для новых заказов

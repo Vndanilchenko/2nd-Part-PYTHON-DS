@@ -1,0 +1,222 @@
+﻿# ДОМАШНЯЯ РАБОТА 8 "ВИЗУАЛИЗАЦИЯ В PYTHON"
+# ДАНИЛЬЧЕНКО ВАДИМ
+"""
+Построить 5 графиков по выбранным данным. 
+
+Графики должны быть различных видов и использовать хотя бы 3 из рассмотренных на занятии библиотек. 
+
+Для каждого описать, какого типа переменные участвуют в визуализации, какова её цель 
+(например, посмотреть на корреляцию двух величин или на распределение значений) и почему выбрали именно такой тип графика.
+"""
+
+#импортируем нужные библиотеки и посмотрим на файл
+import pandas as pd
+df=pd.read_csv('NYC taxi.csv', 'r', delimiter=',')
+df.head()
+
+# проверим в какое время какого дня недели самая большая загрузка
+# будем использовать heatmap библиотеки seaborn, думаю он лучше покажет общую картину распределения заказов по времени суток
+import seaborn as sns
+df_orders=df.filter(items=['vendor_id','pickup_datetime','trip_duration','passenger_count'])
+
+# создадим функцию, возвращающую день недели и час
+from datetime import datetime
+def weekday_hours(data):
+    hours=[]
+    weekday=[]
+    hour_origin=[]
+    for line in data.values:
+        dt=datetime.strptime(line[1],'%Y-%m-%d %H:%M:%S')
+        weekday.append(dt.isoweekday())
+        hours.append(str(dt.hour)+'-'+str(dt.hour+1))
+        hour_origin.append(dt.hour)
+    data['weekday']=weekday
+    data['hours']=hours
+    data['hour_origin']=hour_origin
+    return data
+new_data=weekday_hours(df_orders)
+new_data.head()
+
+#группируем и строим сводную таблицу
+new_data_grouped=new_data.groupby(['weekday','hour_origin']).trip_duration.count().reset_index()
+new_data_grouped.rename(columns={'trip_duration':'cnt'}, inplace=True)
+heatmap_data = new_data_grouped.pivot_table(
+                        index='hour_origin', 
+                        columns='weekday', 
+                        values='cnt', 
+                        aggfunc=sum).fillna(0).applymap(float)
+
+# для того, чтобы масштабировать тепловую карту для seaborn зададим размер фигуры с помощью библиотеки matplotlib, 
+# иначе график сжимается и получается нечитабельным
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(10,10))
+sns.heatmap(heatmap_data, ax=ax)
+plt.show()
+
+# исходя из графика видим, что 
+# 1. часы активности в будни отличается от выходных дней
+# 2. спрос на такси в выходные дни ниже
+
+# посмотрим на долю компаний в суммарной производительности
+# используем круговую диаграмму библотеки matplotlib.pyplot, с помощью нее лучше всего показать долю компаний
+#задаем имена ряда и значения 
+data_names = pd.Series(df_orders.vendor_id.unique())
+data_values = df_orders.groupby('vendor_id').pickup_datetime.count()
+
+#заголовок
+plt.title('доля выполненных заказов таксопарков за все время')
+
+#отобразим отображение круговой диаграммы
+#data_values - значения
+#labels-названия вендоров
+#autopct - процентный формат
+plt.pie(data_values, autopct='%.1f', labels=data_names)
+plt.show()
+
+# нам нужно распределение по месяцам, для этого создадим функцию, возвращающую месяц для datetime
+from datetime import datetime
+def to_month(line):
+    dt=datetime.strptime(line,'%Y-%m-%d %H:%M:%S')
+    return dt.month
+
+#приклеиваем месяц
+df_orders['month']=df_orders.pickup_datetime.apply(to_month,1)
+#df_orders.groupby(['vendor_id','pickup_datetime']).count()
+df_monthly__orders=df_orders.groupby(['vendor_id','month']).count()
+df_monthly__orders=df_monthly__orders.reset_index()
+#видим, что всего 2 транспортные компании и данные представлены за 6 месяцев
+df_monthly__orders
+
+#посмотрим на месячную динамику, чтобы убедиться в постоянстве производительности второго вендора
+#используем bar chart библиотеки plotly
+from plotly.offline import init_notebook_mode, iplot
+import plotly
+import plotly.graph_objs as go
+init_notebook_mode(connected=True)
+
+#опишем ряд 1
+trace0 = go.Bar(
+    x=df_monthly__orders[df_monthly__orders['vendor_id']==1].month,
+    y=df_monthly__orders[df_monthly__orders['vendor_id']==1].pickup_datetime,
+    name='Vendor 1',
+)
+#опишем ряд 2
+trace1 = go.Bar(
+    x=df_monthly__orders[df_monthly__orders['vendor_id']==1].month,
+    y=df_monthly__orders[df_monthly__orders.vendor_id==2].pickup_datetime,
+    name='Vendor 2',
+)
+
+#объединим данные о рядах в один список и зададим заголовок
+data = [trace0, trace1]
+layout = {'title': 'заказы по вендорам'}
+
+#передадим информацию о заголовке и данных и построим график
+fig = go.Figure(data=data, layout=layout)
+iplot(fig, show_link=False)
+#видно, что вендор 1 выполняет большее количество заказов в сравнении с вендором 2
+
+# продолжительность поездки 
+# Гипотеза - менее продолжительные поездки позовляют быстрее освобождать автомобили для новых заказов
+
+# был построен boxplot, из-за аномальных выбросов по продолжительности 1го вендора график визуально схлопывается в области 0 
+# (max 3.5 миллиона секунд.. сложно поверить, что кто-то взял такси на 23 дня, только если это не был угон %D), 
+# надо рассмотреть их количество и удалить, если не окажет влияния на результаты
+
+#посмотрим на распределение продолжительности закзаов- видим незначительные удаленные точки
+v1_trips=df_orders[df_orders['vendor_id']==1].trip_duration
+sns.distplot(v1_trips)
+
+# разобьем на 2 группы - до 1млн секунд и более и посчитаем долю таких заказов
+sh1=v1_trips[v1_trips.trip_duration<1000000].trip_duration.count()/v1_trips.trip_duration.count()
+sh2=v1_trips[v1_trips.trip_duration>=1000000].trip_duration.count()/v1_trips.trip_duration.count()
+#df.set_index('App').T.plot(kind='bar', stacked=True)
+data=[sh1,sh2]
+label=['less than 1 million','over 1 million']
+plt.pie(data, autopct='%.1f', labels=label)
+plt.show()
+
+#доля значений менее 1 миллиона секунд немногим менее 100%, следовательно аномальные выбросы можно удалить
+df_orders_less_1m=df_orders[df_orders.trip_duration<1000000]
+
+# для отображения boxplot будем использовать plotly, чтобы иметь возможность сравнить статистику по 
+# распределению продолжительности поездок двух вендоров
+data = []
+#пройдем по уникальным вендорам и запишем продолжительность поездок, а также имя вендора в список, а также укажем тип графика
+for vendor in df_orders.vendor_id.unique():
+    data.append(
+        go.Box(y=df_orders_less_1m[df_orders_less_1m.vendor_id==vendor].trip_duration, 
+               name=str(vendor))
+    )
+#отображаем график, отключаем ссылку на публикацию графика
+iplot(data, show_link = False)
+
+# медиана продолжительности заказа почти совпадает - 658 против 666 секунд, 1й и 3й квартили тоже, а значит более 96%
+# наблюдений лежат в одном временном диапазоне у обоих вендоров. Продолжим поиск отличий по другим срезам
+# среднее количество пассажиров
+df_passengers=df.filter(items=['vendor_id','passenger_count','trip_duration'])
+sns.boxplot(x="vendor_id", y="passenger_count", data=df_passengers)
+
+# мы видим, что основная масса заказов у первого вендора со ставляют пассажиры-одиночки, а у второго иначе,
+# завернем в обертку и в том же срезе посмотрим по абсолютным значениям
+df_passengers_cnt=df_passengers.groupby(['vendor_id','passenger_count']).trip_duration.count().reset_index()
+df_pivot = df_passengers_cnt.pivot_table(
+                        index='passenger_count', 
+                        columns='vendor_id', 
+                        values='trip_duration', 
+                        aggfunc=sum).fillna(0).applymap(float)
+#df_pivot
+
+def plotly_line_plot(df, title = ''):
+    data = []
+    
+    for column in df.columns:
+        trace = go.Scatter(
+            x = df.index,
+            y = df[column],
+            mode = 'lines',
+            name = column
+        )
+        data.append(trace)
+    
+    layout = dict(title = title)
+    fig = dict(data = data, layout = layout)
+    iplot(fig, show_link=False)
+
+plotly_line_plot(
+    df_pivot,
+    title = 'количество заказов на количество пассажиров в заказе по вендорам'
+)
+
+# видно, что довольно большое количество заказов совершено вторым вендором для заказов с общим количеством пассажиров 
+# от 4х до 6, в то время как у первого заказы практичечески заканчиваются на 4х
+# возможно второй вендор предоставляет групповую скидку или имеет в автопарке автомобили повышенной вместимости
+# для первого же заказы свыше 4 человек являются исключением, скорее всего это постоянные клиенты этой компании, 
+# которым нужно было срочное решение в новых обстоятельствах
+
+# как мы убедились в самом начале, активность в выходные дни отличается от будних, возможно и для количества 
+# пассажиров есть свои закономерности?! проверим гипотезу по среднему количеству пассажиров с помощью той же heatmap
+
+new_data_grouped2=new_data.groupby(['weekday','hour_origin']).passenger_count.mean().reset_index()
+new_data_grouped2.rename(columns={'passenger_count':'avg'}, inplace=True)
+heatmap_data2 = new_data_grouped2.pivot_table(
+                        index='hour_origin', 
+                        columns='weekday', 
+                        values='avg', 
+                        aggfunc=sum).fillna(0).applymap(float)
+
+# для того, чтобы масштабировать тепловую карту для seaborn зададим размер фигуры с помощью библиотеки matplotlib, 
+# иначе график сжимается и получается нечитабельным
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(10,10))
+sns.heatmap(heatmap_data2, ax=ax)
+plt.show()
+
+# как можно заметить в выходые дни среднее количество пассажиров больше стремится к 2 (доля большего количества пассажиров 
+# в заказе не настолько велика, чтобы значительно вытянуть показатель), 
+# вполне вероятно, что за счет более привлекательных условий для больших компаний в выходные дни вендор 2 имеет большую 
+# долю заказов на рынке
+
+# надо копать глубже, но в рамках этого задания уже не успеваю. Хотелось еще отрисовать и посмотреть зону присутствия вендоров
+# может еще быть, что первая компания работает в деловом районе NY, а вторая в спальном 
+# думаю, как-то позже уже так для себя доделаю

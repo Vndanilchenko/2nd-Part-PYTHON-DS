@@ -1,0 +1,422 @@
+
+# РЕШЕНИЕ ------------------------------------------------------------------------------------------------------------------
+
+# импортируем нужные библиотеки
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from sklearn.metrics import roc_auc_score, roc_curve
+import xgboost
+
+# импортируем данные и посмотрим на первый десяток
+df=pd.read_csv('rosbank_train.csv')
+df.head(10)
+
+# примерная расшифровка названий атрибутов
+# PERIOD - месяц операции в формате 01/MM/YYYY
+# MCC- Merchant Category Code — буквально «код категории продавца»
+# channel_type - канал привлечения (первое значение для всех транзакций)
+# currency - валюта транзакции
+# TRDATETIME - дата/время операции
+# amount - размер транзакции
+# trx_category - тип транзакции
+# target_flag - наша разметка, где 0 - не воспользовался услугами, 1 - воспользовался услугами в дальнейшем
+
+# посмотрим статистику
+df.info()
+
+# видим пропуски данных в channel_type
+# удалим транзакции с отсутствующим каналом
+df.dropna(inplace=True)
+
+# теперь количество данных совпадает
+df.info()
+
+# посмотрим какое количество уникальных значений в наших полях
+def count_unique_elements(dataframe):
+    dict_result={}
+    for col in dataframe.columns:
+        dict_result.setdefault(col,0)
+        dict_result[col]=len(dataframe[col].unique())
+
+    return dict_result
+count_unique_elements(df)
+
+# подключимся к списку MCC-категорий и добавим описание
+MCC=pd.read_excel('MCC.xlsx')
+df=df.merge(MCC, on='MCC',  how='left')
+
+# ПОСМОТРИМ НА САМЫЕ ПОПУЛЯРНЫЕ КАТЕГОРИИ ВНУТРИ АТРИБУТА (найдем ТОП)
+# 1. MCC - продуктовые, обналичка и фастфуд составляют 44%
+# опытным путем приходим к выводу, что лучше сосредоточиться на топ 10 категориях, обеспечивающих 70% транзакций, остальные 
+# имеют совсем малую долю и можно потратить больше денег на их привлечение и удержание, чем они принесут прибыли
+MCC_top=df[df.MCC.isin(df.MCC.value_counts(normalize=True).head(10).keys())].groupby(['MCC','DESCRIPTION']).\
+    MCC.count().sort_values(ascending=False)/df.MCC.count()
+print(MCC_top, '\n\nsumm top 10: {:%}'.format(sum(MCC_top)))
+
+# посмотрим какие из этих продуктовых категорий максимально указывают на дальнейшие покупки клиента в будущем
+# для этого посчитаем долю 1 в категории и отсортируем по убыванию показателя
+MCC_good=pd.DataFrame(df[df.target_flag==1].MCC.value_counts()/df.MCC.value_counts()).sort_values(by='MCC', ascending=False)
+MCC_good.reset_index()
+
+# в списке есть категории без единиц, то есть можно сказать, что покупки в данных категориях не имеют предсказательной силы
+print('количество null-категорий: {}'.format(MCC_good.isna().sum()[0]))
+# выбросим категории без единиц и посмотрим на статистику
+MCC_good.dropna().describe()
+
+print('из 319 кодов мерчанта как минимум в половине случаев 70% единиц по таргету, \
+а количество категорий состоящих только из 1: {}'.format(MCC_good[MCC_good.MCC==1].count()[0]))
+# проверим долю единичек в топ3 категории
+MCC_top=pd.DataFrame(MCC_top)
+MCC_top.rename(columns={'MCC':'MCC_count'}, inplace=True)
+MCC_top=MCC_top.reset_index()
+MCC_good.MCC[MCC_top.MCC].reset_index()
+
+# на мой взгляд довольно неплохо - эти типы имеют максимальную долю среди транзакций и при этом содержат минимум 56% единичек
+# (при этом это небольшая доля транзакций - 2%), основная же масса в топ 10 от 62% до 73%
+# это значит, что минимум 62% клиентов, совершивших подобные покупки, вернулись в будущем
+# надо проверить на распеределение данных категорий по дате, чтобы исключить гипотезу, что в следствие какой-то временной акции
+# все эти транзакции сосредоточены вокруг одного периода
+
+# импортируем библиотеки и создадим обертку для графика - далее будем передавать в нее сводную таблицу
+from plotly.offline import init_notebook_mode, iplot
+import plotly
+import plotly.graph_objs as go
+init_notebook_mode(connected=True)
+
+def plotly_line_plot(df, title = ''):
+    data = []
+    
+    for column in df.columns:
+        trace = go.Scatter(
+            x = df.index,
+            y = df[column],
+            mode = 'lines',
+            name = column
+        )
+        data.append(trace)
+    
+    layout = dict(title = title)
+    fig = dict(data = data, layout = layout)
+    iplot(fig, show_link=False)
+
+# напишем функцию для преобразования периода в корректный для сортировки в сводной таблице формат
+from datetime import datetime
+def change_date(date):
+    curr_date=datetime.strptime(date, '%d/%m/%Y')
+    return curr_date.strftime('%Y-%m-%d')
+
+# сделаем преобразование датафрейма - заменим столбцец с исходной датой на более подходящий для последующей сортировки
+# сгруппируем все значения по периодам и категориям мерчанта
+period_count=df[df.MCC.isin(MCC_top.MCC)].groupby(['PERIOD','DESCRIPTION']).cl_id.count().reset_index().rename(columns={'cl_id':'count'})
+period_count['PERIOD_NEW']=period_count.PERIOD.apply(change_date)
+period_count=period_count[period_count.columns[1:]]
+
+# создадим сводную таблицу, где по столбцам разложим категории
+period_count_pivot=period_count.pivot_table(
+                        index='PERIOD_NEW', 
+                        columns='DESCRIPTION', 
+                        values='count', 
+                        aggfunc=sum).fillna(0).applymap(float)
+
+# передадим таблицу в обертку графика
+plotly_line_plot(period_count_pivot, 'распределение продаж топ10 категорий по периодам')
+
+# видим, что продажи топ 10 категорий не сосредоточены вокруг одной даты, а распределены по периоду с некоторой закономерностью
+# мы можем наблюдать 2 моды - декабрь 2016 и июль 2017, учитыая специфику топ 3 категорий, зимой это закупки к праздничному столу, 
+# снятие наличных для покупки подарков и соответствующее питание на фудкортах во время прогулок по торговм центрам за едой 
+# и подарками
+# летом же закупки продуктов для отдыха на природе/даче, снятие наличных для оплаты путешествий, долгие прогулки на 
+# свежем воздухе, которые неизбежно приведут к перекусам в фастфудах
+
+# интерес вызывает спад востребованности этих категорий со второй половины 2017го года, возможно это связано, например, 
+# с изменением категорий повышенного кэшбэка для клиентов и оттока денег в другие MCC, которые не успели сделать заметной долю на 
+# полном периоде - надо посмотреть на продажи других продуктовых категорий в периоде 08.17-04.18 
+
+period_test=df
+period_test['PERIOD_NEW']=period_test.PERIOD.apply(change_date)
+period_test=period_test[period_test.PERIOD_NEW>='2017-08-01']
+MCC_top2=(period_test.groupby(['MCC','DESCRIPTION']).MCC.count().sort_values(ascending=False)/period_test.MCC.count()).head(10)
+print(MCC_top2, '\n\nsumm top 10: {:%}'.format(sum(MCC_top2)))
+
+# видим, что состав первых 10 категорий не изменился, хотя доля подросла до 72%, значит количество транзакций банка снизилось
+
+# 2. проведем анализ канала привлечения клиента - их 5, посмотрим какой канал приносит больше постоянных клиентов
+# каналы 1 и 2 принесли больше всего транзакций (97%)
+CHANEL_top=df.channel_type.value_counts()/df.channel_type.count()
+print(CHANEL_top, '\n\nsumm top 2: {:%}'.format(sum(CHANEL_top.head(2))))
+
+# посмотрим сколько клиентов в дальнейшем воспользовались услугами банка
+df[df.target_flag==1].channel_type.value_counts()/df.channel_type.value_counts()
+# проверим распределение каналов в топ10 продуктовых категорий транзакций
+#MCC_top2=(period_test.groupby(['MCC','DESCRIPTION']).MCC.count().sort_values(ascending=False)/period_test.MCC.count()).head(10)
+df[df.MCC.isin(MCC_top2.rename(columns={'MCC':'share'}).reset_index().MCC)].channel_type.value_counts()\
+    /df[df.MCC.isin(MCC_top2.rename(columns={'MCC':'share'}).reset_index().MCC)].channel_type.count()
+
+# расределение сохраняется
+# посмотрим сколько клиентов в дальнейшем воспользовались услугами банка
+df[df.target_flag==1].channel_type.value_counts()/df.channel_type.value_counts()
+
+# оказывается хоть и канал 2 принес всего 36% клиентов, в будущем 89% из них возвращаются, а значение первого канала 
+# немногим больше результата случайного гадания. На данном этапе оставим первые два
+
+# 3. изучим тип транзакции (trx_category)
+df.trx_category.value_counts()/df.trx_category.count()
+
+# POS (думаю, POS-терминал, используемый в торговых точках) составляет 84% от всех транзакций
+# посмотрим на долю целевой переменной
+
+df[df.target_flag==1].trx_category.value_counts()/df.trx_category.value_counts()
+
+# 65% клиентов из POS вернулись в банк, можно дальше рассматривать только этот тип
+# интересно посмотреть есть ли зависимость между транзакциями клиентов, скажем, кто воспользовался POS, использует также и 
+# WD_ATM_ROS (думаю, снятие наличных в банкоматах Росбанка)
+
+cl_trx_count=df.groupby(['cl_id','trx_category']).agg({'trx_category': 'count'})
+cl_trx_count=cl_trx_count.rename(columns={'trx_category':'count'}).reset_index()
+data_for_corr=cl_trx_count.pivot_table(
+                        index='cl_id',
+                        columns='trx_category',
+                        values='count',
+                        aggfunc=sum).fillna(0)
+#data_for_corr.corr()
+# визуализируем результаты
+import seaborn as sns
+import matplotlib.pyplot as plt
+f, ax = plt.subplots(figsize=(9, 6))
+
+sns.heatmap(data_for_corr.corr(), annot=True, fmt='.1f', ax=ax, cmap=sns.color_palette('coolwarm', 16))
+
+# максимальная корреляция 0.2 - линейная зависимость между наличием разных типов транзакций у клиента не обнаружена
+# теперь оценим объемы транзаций, чтобы смело отбросить транзакции с малой долей в общем числе
+
+trx_sum=df.groupby(['trx_category']).agg({'amount':'sum'})
+trx_sum=trx_sum.reset_index()
+sns.catplot(trx_sum.trx_category,trx_sum.amount, data=trx_sum, kind="bar", palette="Blues", height=6,aspect=2)
+
+# больше всего по сумме POS, интересно, что снятие денег (в банкоматах Росбанка, партнеров и других) по объему больше POS
+trx_sum_share=(trx_sum.amount.sort_values(ascending=False)/trx_sum.amount.sum()).reset_index().rename(columns={'index':'number'})
+f'сумма по снятиям наличных в банкоматах(банк, пратнеры, другие): \
+{trx_sum_share[trx_sum_share.number.isin([7,8,9])].amount.sum():%}, POS же: \
+{trx_sum_share[trx_sum_share.number==6].amount[0]:%}%'
+
+# думаю, стоит объединить снятия наличных в одну группу и посмотреть статистику заново
+# функция объединит эти три канала в один
+def trx_new(channel):
+    if channel=='WD_ATM_OTHER' or channel=='WD_ATM_PARTNER' or channel=='WD_ATM_ROS':
+        return 'WD_ATM'
+    else:
+        return channel
+
+# создам новое поле с объединенным типом транзакций и посмотрю на долю
+df['trx_category_new']=df.trx_category.apply(trx_new)
+df.trx_category_new.value_counts()/df.trx_category_new.count()
+
+# доля количества объединенных транзакций по снятию наличных 7%, посмотрим на долю в ней единиц целевой переменной
+df[df.target_flag==1].trx_category_new.value_counts()/df.trx_category_new.value_counts()
+
+# 75% клиентов, использующих банкоматы, впоследствии вернулось, добавляем этот тип в список атрибутов для дальнешего анализа
+# есть еще один тип транзакций - депозиты, 3 место по сумме, но количество единиц целевой переменной 47%, что плохо, 
+# с другой стороны этот тоже информативно - можно считать, что качество этой услуги недостаточно и клиент, воспользовавшись ей, 
+# с большей вероятностью откажется сотрудничать с банком в дальнейшем, то есть это зона роста для банка
+
+# снова посмотрим на корреляцию
+cl_trx_count=df.groupby(['cl_id','trx_category_new']).agg({'trx_category_new': 'count'})
+cl_trx_count=cl_trx_count.rename(columns={'trx_category_new':'count'}).reset_index()
+data_for_corr=cl_trx_count.pivot_table(
+                        index='cl_id',
+                        columns='trx_category_new',
+                        values='count',
+                        aggfunc=sum).fillna(0)   
+f, ax = plt.subplots(figsize=(9, 6))
+sns.heatmap(data_for_corr.corr(), annot=True, fmt='.1f', ax=ax, cmap=sns.color_palette('coolwarm', 16))
+
+# даа, лучше не стало :)) идем дальше
+# 4. валюта транзакции
+(df.currency.value_counts()/df.currency.count()).head()
+
+# 97% всех транзакций составляет валюта с кодом 810 (код рубля), проверим на долю этой валюты типе транзакции, 
+# чтобы убедиться в коррекности сопоставления сумм 
+
+df[df.currency==810].trx_category_new.value_counts()/df.trx_category_new.value_counts()
+
+# доля рубля в самых массовых типах транзакций 97-98%, можно работать дальше только с рублем
+
+# 5. посмотрим на распределение транзакций по дням недели
+#last_monday=(datetime.today()-timedelta(days=datetime.today().weekday())).strftime("%Y-%m-%d")
+df.head()
+
+# напишем функцию, преобразующую дату в день недели
+def wkday(date):
+    return datetime.strptime(date, '%Y-%m-%d').weekday()+1
+# добавим новое поле в исходный фрейм данных
+df['weekday']=df.PERIOD_NEW.apply(wkday)
+
+# выведем распределение транзакций по дням недели
+weekdays=(df['weekday'].value_counts()/df['weekday'].count()).reset_index()
+weekdays=weekdays.rename(columns={'weekday':'cnt_transactions','index':'weekday_names'})
+sns.catplot(weekdays.weekday_names,weekdays.cnt_transactions, data=weekdays, kind="bar", palette="Blues", height=6, aspect=2)
+weekdays
+
+# меньше всего транзакций совершается в пятницу (10%), больше всего в четверг и субботу (по 21%)
+# посмотрим долю единичек целевой переменной 
+weekdays_targ=(df[df.target_flag==1]['weekday'].value_counts()/df['weekday'].value_counts()).reset_index()
+weekdays_targ=weekdays_targ.rename(columns={'weekday':'cnt_transactions','index':'weekday_names'})
+weekdays_targ
+
+# интересно, что клиенты с транзакциями по пятницам возвращаются чаще остальных (79% от пятницы), посмотрим на объем
+
+weekdays_sum=(df[df.currency==810].groupby(['weekday']).amount.sum()/df[df.currency==810].amount.sum()).reset_index()
+sns.catplot(weekdays_sum.weekday,weekdays_sum.amount, data=weekdays_sum, kind="bar", palette="Blues", height=6, aspect=2)
+weekdays_sum
+
+# сумма по дням не отличается от количества транзакций
+
+# подведем краткие итоги:
+# 1. MCC - топ 10 категорий мерчанта 
+MCC_list=MCC_top.MCC.tolist()
+print('1. топ 10 категорий мерчанта составляет {:%} от всех \nСписок категорий: {}'.format(sum(MCC_top2),MCC_list))
+# 2. channel_type - ТОП 2 канала 
+channel_distr=(df.channel_type.value_counts()/df.channel_type.count()).reset_index().rename(columns={'index':'channel'})
+channel=channel_distr.head(2).channel.tolist()
+channel_share=channel_distr[channel_distr.channel.isin(channel)].channel_type.sum()/channel_distr.channel_type.sum()
+print('2. 2 канала привлечения {:%} от всех \nСписок каналов: {}'.format(channel_share, channel))
+# 3. trx_category - оставляем POS и WD_ATM
+trx_distr=(df.trx_category_new.value_counts()/df.trx_category_new.count()).reset_index().rename(columns={'index':'channel'})
+trx=trx_distr.head(2).channel.tolist()
+trs_share=trx_distr[trx_distr.channel.isin(trx)].trx_category_new.sum()/trx_distr.trx_category_new.sum()
+print('3. 2 канала последующих расходов {:%} от всех \nСписок каналов: {}'.format(trs_share, trx))
+# 4. currency - оставляем RUR (df.currency.value_counts()/df.currency.count()).head()
+currency_distr=(df.currency.value_counts()/df.currency.count()).reset_index().rename(columns={'index':'currency_name'})
+currency=currency_distr.head(1).currency_name.tolist()
+currency_share=currency_distr[currency_distr.currency_name.isin(currency)].currency.sum()/currency_distr.currency.sum()
+print('4. 1 валюта транзакций {:%} от всех \nКод валюты: {}'.format(currency_share, currency))
+# 5. день недели - оставляем все
+print('5. оставляем все дни недели')
+
+# приведем данные в пригодный для модели вид - фичи по столбцам, cl_id по строкам
+df_model=df[(df.MCC.isin(MCC_list))&(df.channel_type.isin(channel))&(df.trx_category_new.isin(trx))&(df.currency==currency)]\
+    [['cl_id','channel_type', 'MCC', 'trx_category_new','weekday']]
+
+
+df_model_agg=df_model.groupby(['cl_id','channel_type', 'MCC', 'trx_category_new','weekday']).agg({'cl_id':'count'})
+df_model_agg=df_model_agg.rename(columns={'cl_id':'trx_count'})
+#df_model_agg
+df_model_agg.unstack(level=[1,2,3,4]).reset_index()
+
+df_model.head()
+
+# напишем функцию для преобразования всех уникальных переменных в столбцах исходных данных из строк по столбцам
+
+# функция получает cl_id и какой-то столбец, группирует и делает сводную таблицу, располагая строки столбца по столбцам 
+def pvt_table(two_cols_df):
+    agg_vals=two_cols_df.groupby(['cl_id',two_cols_df.columns[1]]).agg({'cl_id':'count'}).rename(columns={'cl_id':'cnt_trx'})\
+        .reset_index()
+    pvt_new=agg_vals.pivot_table(
+                        index='cl_id',
+                        columns=two_cols_df.columns[1],
+                        values='cnt_trx',
+                        aggfunc='sum')
+    return pvt_new
+
+# вызовем функцию столько раз, сколько есть свободных столбцов, передавая каждый раз cl_id и новый столбец, затем все объединим
+# на выходе получим все наши фичи по столбцам и уникальные записи клиентов по строкам, а мерой будет количество транзакций
+for i in range(len(df_model.columns)-1):
+    if i==0:
+        pvt_final=pvt_table(df_model[['cl_id',df_model.columns[i+1]]])
+    else:
+        pvt_final=pvt_final.merge(pvt_table(df_model[['cl_id',df_model.columns[i+1]]]), on='cl_id', how='left')
+        
+pvt_final
+
+# проверим,что на одного клиента есть отметка 1 или 0 в target_flag, просто для каждой транзакции она повторяется
+agg_target=df.groupby(['cl_id', 'target_flag']).agg({'PERIOD':'count'}).reset_index().rename(columns={'PERIOD':'cnt'})
+pvt_target=agg_target.pivot_table(
+                        index='cl_id',
+                        columns='target_flag',
+                        values='cnt',
+                        aggfunc='sum')
+pvt_target.head()
+
+# убедились, теперь можно подтянуть к каждому клиенту его флаг
+def unify_target(row):
+    if row[1]>0:
+        return 1
+    else:
+        return 0
+pvt_target['target_unique']=pvt_target.apply(unify_target, axis=1)
+pvt_target=pvt_target[pvt_target.columns[2]].reset_index()
+
+pvt_final=pvt_final.merge(pvt_target, on='cl_id', how='left')
+pvt_final.head()
+
+# разобьем наши данные на тренировочную и тестовую выборку
+from sklearn.cross_validation import train_test_split
+y = pvt_final['target_unique'].copy()
+data_train, data_test, y_train, y_test = train_test_split(pvt_final, y, test_size=0.3, random_state=42)
+
+def get_woe_v1(df_train, df_test, col, target_col):
+    all_good = len(df_train[df_train[target_col] == 1][col])
+    all_bad = len(df_train[df_train[target_col] == 0][col])
+    odds_series = (
+        df_train[df_train[target_col] == 1][col].value_counts()
+        /
+        df_train[df_train[target_col] == 0][col].value_counts()
+    )
+    odds_series = odds_series / all_good * all_bad
+    category_woe_dict = np.log(odds_series).to_dict()
+    df_train[str(col) + '_woe'] = df_train[col].apply(category_woe_dict.get)
+    df_test[str(col) + '_woe'] = df_test[col].apply(category_woe_dict.get)
+    return df_train, df_test
+
+# build counts
+#columns_to_get_counts
+columns_to_get_counts=list(pvt_final.columns[:-1])
+    
+for col_get_prob in columns_to_get_counts:
+    data_train, data_test = get_woe_v1(data_train, data_test, col_get_prob, 'target_unique')
+    #print(col_get_prob)
+
+# обучим модель c помощью метода градиентоного бустинга
+x_train = data_train[columns_to_get_counts]
+y_train = data_train['target_unique']
+x_test = data_test[columns_to_get_counts]
+y_test = data_test['target_unique']
+
+xgb = xgboost.XGBClassifier(max_depth=5, n_jobs=-1)
+xgb.fit(x_train, y_train)
+y_train_predict = xgb.predict_proba(x_train)[:, 1]
+y_test_predict = xgb.predict_proba(x_test)[:, 1]
+roc_auc_train = np.round(roc_auc_score(y_train, y_train_predict), 2)
+roc_auc_test = np.round(roc_auc_score(y_test, y_test_predict), 2)
+print("Train: ", roc_auc_train)
+print("Test: ", roc_auc_test)
+
+# на тестовых данных показатель прогностической силы классификатора хуже, но не сильно, 
+# визуализируем построим график ROC AUC кривой
+
+import matplotlib
+fpr_train, tpr_train, thresholds_train = roc_curve(y_train, y_train_predict)
+fpr_test, tpr_test, thresholds_test = roc_curve(y_test, y_test_predict)
+
+matplotlib.rcParams['figure.figsize'] = (10.0, 10.0)
+plt.plot(fpr_train, tpr_train, label='Train ROC AUC {0}'.format(roc_auc_train))
+plt.plot(fpr_test, tpr_test, label='Test ROC AUC {0}'.format(roc_auc_test))
+plt.plot([0, 1], [0, 1], '--', color=(0.6, 0.6, 0.6))
+plt.xlim([0, 1])
+plt.ylim([0, 1])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('XGB Classifier', size=16)
+plt.legend(loc='lower right')
+plt.show()
+
+# построим граик важности признаков
+xgboost.plot_importance(booster=xgb)
+
+## можем сделать вывод, что во многом вернется ли клиент зависит от самого клиента, 
+## еще можно сказать, то наш идеальный клиент делает покупки в четверг, субботу и воскресение,
+## при этом в основном в продовольственных магазинах, либо снимает в эти дни деньги, либо кушает в фастфудах и ресторанах, 
+## оплачивая через POS-канал и первое взаимодействие с банком у него произошло через канал 1, то этот клиент с большей
+## вероятностью вернется вновь.
+## на удивление канал привлечения 2 с 37% транзакций и 89% вернувшимися клиентами оказался наименее значим..
